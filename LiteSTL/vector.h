@@ -49,7 +49,7 @@ namespace NAME_GENERAL_NAMESPACE
 			container->n_capacity = _size;
 			for (auto p = _list.begin(); p != _list.end(); ++p, ++container->p_end)
 			{
-				AllocTraits::construct(alloc, container->p_end, *p);
+				AllocTraits::construct(alloc, container->p_end, std::move(*p));
 			}
 		}
 		template<typename Itr, typename = std::enable_if_t<std::_Is_iterator_v<Itr>>>
@@ -248,6 +248,123 @@ namespace NAME_GENERAL_NAMESPACE
 			return const_reverse_iterator(begin());
 		}
 
+		template <typename... Args>
+		iterator emplace(const_iterator _where, Args&&... args)
+		{
+#ifdef _DEBUG
+			_STL_ASSERT(container == _where.source, "vector iterators incompatible");
+#endif // _DEBUG
+			if (_where.ptr == container->p_end)
+			{
+				emplace_back(std::forward<Args>(args)...);
+				return iterator(container->p_end - 1, container);
+			}
+			if (container->n_capacity == container->p_end - container->p_begin)
+			{
+				size_t new_capacity = container->n_capacity;
+				new_capacity += ((new_capacity >> 1) ? (new_capacity >> 1) : 1);
+				DataType* new_begin = AllocTraits::allocate(alloc, new_capacity);
+				DataType* new_end = new_begin;
+				for (DataType* p = container->p_begin; p != _where.ptr; ++p, ++new_end)
+				{
+					AllocTraits::construct(alloc, new_end, std::move(*p));
+					AllocTraits::destroy(alloc, p);
+				}
+				AllocTraits::construct(alloc, new_end, std::forward<Args>(args)...);
+				DataType* re = new_end;
+				++new_end;
+				for (DataType* p = _where.ptr; p != container->p_end; ++p, ++new_end)
+				{
+					AllocTraits::construct(alloc, new_end, std::move(*p));
+					AllocTraits::destroy(alloc, p);
+				}
+				AllocTraits::deallocate(alloc, container->p_begin, container->n_capacity);
+				container->p_begin = new_begin;
+				container->p_end = new_end;
+				container->n_capacity = new_capacity;
+				return iterator(re, container);
+			}
+			else
+			{
+				AllocTraits::construct(alloc, container->p_end, std::move(*(container->p_end - 1)));
+				container->p_end++;
+				for (DataType* p = container->p_end - 2; p != _where.ptr; --p)
+				{
+					*p = std::move(*(p - 1));
+				}
+				*(_where.ptr) = DataType(std::forward<Args>(args)...);
+				return iterator(_where.ptr, container);
+			}
+		}
+		iterator insert(const_iterator _where, std::initializer_list<DataType> _list)
+		{
+#ifdef _DEBUG
+			_STL_ASSERT(container == _where.source, "vector iterators incompatible");
+#endif // _DEBUG
+			size_t list_size = _list.size();
+			if (list_size > container->n_capacity - (container->p_end - container->p_begin))
+			{
+				size_t new_capacity = container->n_capacity;
+				size_t target_capacity = list_size + (container->p_end - container->p_begin);
+				while (new_capacity < target_capacity)
+				{
+					new_capacity += ((new_capacity >> 1) ? (new_capacity >> 1) : 1);
+				}
+				DataType* new_begin = AllocTraits::allocate(alloc, new_capacity);
+				DataType* new_end = new_begin;
+				for (DataType* p = container->p_begin; p != _where.ptr; ++p, ++new_end)
+				{
+					AllocTraits::construct(alloc, new_end, std::move(*p));
+					AllocTraits::destroy(alloc, p);
+				}
+				DataType* re = new_end;
+				for (const DataType* p = _list.begin(); p != _list.end(); ++p, ++new_end)
+				{
+					AllocTraits::construct(alloc, new_end, std::move(*p));
+				}
+				for (DataType* p = _where.ptr; p != container->p_end; ++p, ++new_end)
+				{
+					AllocTraits::construct(alloc, new_end, std::move(*p));
+					AllocTraits::destroy(alloc, p);
+				}
+				AllocTraits::deallocate(alloc, container->p_begin, container->n_capacity);
+				container->p_begin = new_begin;
+				container->p_end = new_end;
+				container->n_capacity = new_capacity;
+				return iterator(re, container);
+			}
+			else
+			{
+				DataType* new_end = container->p_end + list_size;
+				DataType* p_backward = new_end;
+				for (DataType* p = container->p_end - 1; p != _where.ptr - 1; --p, --p_backward)
+				{
+					if (p_backward < container->p_end)
+					{
+						*p_backward = std::move(*p);
+					}
+					else
+					{
+						AllocTraits::construct(alloc, p_backward, std::move(*p));
+					}
+				}
+				DataType* p_forward = _where.ptr;
+				for (const DataType* p = _list.begin(); p != _list.end(); ++p, ++p_forward)
+				{
+					if (p_forward < container->p_end)
+					{
+						*p_forward = std::move(*p);
+					}
+					else
+					{
+						AllocTraits::construct(alloc, p_forward, std::move(*p));
+					}
+				}
+				container->p_end = new_end;
+				return iterator(_where.ptr, container);
+			}
+		}
+
 		DataType& operator[](size_t index)
 		{
 #ifdef _DEBUG
@@ -262,6 +379,22 @@ namespace NAME_GENERAL_NAMESPACE
 #endif // _DEBUG
 			return *(container->p_begin + index);
 		}
+		DataType& front()
+		{
+			return *(container->p_begin);
+		}
+		const DataType& front()const
+		{
+			return *(container->p_begin);
+		}
+		DataType& back()
+		{
+			return *(container->p_end - 1);
+		}
+		const DataType& back()const
+		{
+			return *(container->p_end - 1);
+		}
 
 	private:
 		void expand_capacity()
@@ -269,7 +402,16 @@ namespace NAME_GENERAL_NAMESPACE
 			if ((container->n_capacity) >> 1)reserve(container->n_capacity + ((container->n_capacity) >> 1));
 			else reserve(container->n_capacity + 1);
 		}
-
+		void expand_capacity(size_t increment)
+		{
+			size_t tar_capacity = container->n_capacity;
+			while (tar_capacity < container->n_capacity + increment)
+			{
+				if (tar_capacity >> 1)tar_capacity += (tar_capacity >> 1);
+				else tar_capacity++;
+			}
+			reserve(tar_capacity);
+		}
 	};
 
 	template<typename DataType, typename Alloc>
@@ -331,9 +473,9 @@ namespace NAME_GENERAL_NAMESPACE
 		const reference operator*()const noexcept
 		{
 #ifdef _DEBUG
-			_STL_VERIFY(ptr, "can't dereference value-initialized vector iterator");
-			_STL_VERIFY(source, "can't dereference invalidated vector iterator");
-			_STL_VERIFY(
+			_STL_ASSERT(ptr, "can't dereference value-initialized vector iterator");
+			_STL_ASSERT(source, "can't dereference invalidated vector iterator");
+			_STL_ASSERT(
 				source->p_begin <= ptr && ptr < source->p_end, "can't dereference out of range vector iterator");
 #endif // _DEBUG
 			return *ptr;
@@ -342,9 +484,9 @@ namespace NAME_GENERAL_NAMESPACE
 		const pointer operator->()const noexcept
 		{
 #ifdef _DEBUG
-			_STL_VERIFY(ptr, "can't dereference value-initialized vector iterator");
-			_STL_VERIFY(source, "can't dereference invalidated vector iterator");
-			_STL_VERIFY(
+			_STL_ASSERT(ptr, "can't dereference value-initialized vector iterator");
+			_STL_ASSERT(source, "can't dereference invalidated vector iterator");
+			_STL_ASSERT(
 				source->p_begin <= ptr && ptr < source->p_end, "can't dereference out of range vector iterator");
 #endif // _DEBUG
 			return ptr;
@@ -482,9 +624,9 @@ namespace NAME_GENERAL_NAMESPACE
 		const pointer operator->()const noexcept
 		{
 #ifdef _DEBUG
-			_STL_VERIFY(this->ptr, "can't dereference value-initialized vector iterator");
-			_STL_VERIFY(this->source, "can't dereference invalidated vector iterator");
-			_STL_VERIFY(
+			_STL_ASSERT(this->ptr, "can't dereference value-initialized vector iterator");
+			_STL_ASSERT(this->source, "can't dereference invalidated vector iterator");
+			_STL_ASSERT(
 				this->source->p_begin <= this->ptr && this->ptr < this->source->p_end, "can't dereference out of range vector iterator");
 #endif // _DEBUG
 			return this->ptr;
