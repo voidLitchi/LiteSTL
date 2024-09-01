@@ -1,4 +1,5 @@
-﻿#pragma once
+﻿//vector ver.0.1
+#pragma once
 #include "general_define.h"
 
 #include<memory>
