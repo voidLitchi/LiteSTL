@@ -58,10 +58,11 @@ namespace NAME_GENERAL_NAMESPACE
 			//if the iterator is at least a forward iterator
 			if (std::is_convertible_v<std::_Iter_cat_t<Itr>, std::forward_iterator_tag>)
 			{
-				size_t _size = std::distance(_begin, _end);
+				auto _diff = std::distance(_begin, _end);
 #ifdef _DEBUG
-				_STL_ASSERT(_size >= 0, "vector iterator range transposed");
+				_STL_ASSERT(_diff >= 0, "vector iterator range transposed");
 #endif // _DEBUG
+				size_t _size = static_cast<size_t>(_diff);
 				container->p_begin = AllocTraits::allocate(alloc, _size);
 				container->p_end = container->p_begin;
 				container->n_capacity = _size;
@@ -136,6 +137,10 @@ namespace NAME_GENERAL_NAMESPACE
 			}
 		}
 
+		bool empty()const
+		{
+			return container->p_end == container->p_begin;
+		}
 		size_t size()const
 		{
 			return container->p_end - container->p_begin;
@@ -143,6 +148,23 @@ namespace NAME_GENERAL_NAMESPACE
 		size_t capacity()const
 		{
 			return container->n_capacity;
+		}
+		DataType* data()
+		{
+			return container->p_begin;
+		}
+		const DataType* data()const
+		{
+			return container->p_begin;
+		}
+		Alloc get_allocator()const
+		{
+			return alloc;
+		}
+		size_t max_size()const
+		{
+			return static_cast<size_t>(std::_Max_limit<AllocTraits::difference_type>()) > AllocTraits::max_size(alloc) ?
+				static_cast<size_t>(std::_Max_limit<AllocTraits::difference_type>()) : AllocTraits::max_size(alloc);
 		}
 
 		void resize(const size_t _size, const DataType& _val = DataType())
@@ -194,6 +216,156 @@ namespace NAME_GENERAL_NAMESPACE
 				container->p_begin = new_data;
 				container->p_end = new_end;
 				container->n_capacity = _capacity;
+			}
+		}
+		void shrink_to_fit()
+		{
+			if (static_cast<size_t>(container->p_end - container->p_begin) != container->n_capacity)
+			{
+				if (container->p_begin == container->p_end)
+				{
+					AllocTraits::deallocate(alloc, container->p_begin, container->n_capacity);
+					container->p_begin = nullptr;
+					container->p_end = nullptr;
+					container->n_capacity = 0;
+				}
+				else
+				{
+					DataType* new_data = AllocTraits::allocate(alloc, static_cast<size_t>(container->p_end - container->p_begin));
+					DataType* new_end = new_data;
+					for (DataType* p = container->p_begin; p != container->p_end; ++p, ++new_end)
+					{
+						AllocTraits::construct(alloc, new_end, std::move(*p));
+						AllocTraits::destroy(alloc, p);
+					}
+					AllocTraits::deallocate(alloc, container->p_begin, container->n_capacity);
+					container->p_begin = new_data;
+					container->p_end = new_end;
+					container->n_capacity = static_cast<size_t>(container->p_end - container->p_begin);
+				}
+			}
+		}
+
+	private:
+		template<typename Itr>
+		void assign_counted_range(Itr _begin, size_t _cnt)
+		{
+			if (_cnt > container->n_capacity)
+			{
+				DataType* new_data = AllocTraits::allocate(alloc, _cnt);
+				DataType* new_end = new_data;
+				size_t count_down = _cnt;
+				for (; count_down; ++_begin, --count_down, ++new_end)
+				{
+					AllocTraits::construct(alloc, new_end, *_begin);
+				}
+				clear();
+				if (container->p_begin)
+				{
+					AllocTraits::deallocate(alloc, container->p_begin, container->n_capacity);
+				}
+				container->p_begin = new_data;
+				container->p_end = new_end;
+				container->n_capacity = _cnt;
+			}
+			else
+			{
+				DataType* p_forward = container->p_begin;
+				size_t count_down = _cnt;
+				for (; count_down && p_forward != container->p_end; ++_begin, --count_down, ++p_forward)
+				{
+					*p_forward = *_begin;
+				}
+				if (count_down)
+				{
+					for (; count_down; ++_begin, --count_down)
+					{
+						emplace_back(*_begin);
+					}
+				}
+				else if (p_forward != container->p_end)
+				{
+					DataType* new_end = p_forward;
+					for (; p_forward != container->p_end; ++p_forward)
+					{
+						AllocTraits::destroy(alloc, p_forward);
+					}
+					container->p_end = new_end;
+				}
+			}
+		}
+		template<typename Itr>
+		void assign_uncounted_range(Itr _begin, Itr _end)
+		{
+			DataType* p_forward = container->p_begin;
+			for (; _begin != _end && p_forward != container->p_end; ++_begin, ++p_forward)
+			{
+				*p_forward = *_begin;
+			}
+			if (_begin != _end)
+			{
+				for (; _begin != _end; ++_begin)
+				{
+					emplace_back(*_begin);
+				}
+			}
+			else if (p_forward != container->p_end)
+			{
+				DataType* new_end = p_forward;
+				for (; p_forward != container->p_end; ++p_forward)
+				{
+					AllocTraits::destroy(alloc, p_forward);
+				}
+				container->p_end = new_end;
+			}
+		}
+
+	public:
+		void assign(std::initializer_list<DataType> _list)
+		{
+			assign_counted_range(_list.begin(), _list.size());
+		}
+		void assign(const size_t _cnt, const DataType& _val)
+		{
+			reserve(_cnt);
+			size_t count_down = _cnt;
+			DataType* p_forward = container->p_begin;
+			for (; p_forward != container->p_end && count_down; ++p_forward, --count_down)
+			{
+				*p_forward = _val;
+			}
+			if (p_forward != container->p_end)
+			{
+				DataType* new_end = container->p_end;
+				for (; p_forward != container->p_end; ++p_forward)
+				{
+					AllocTraits::destroy(alloc, p_forward);
+				}
+				container->p_end = new_end;
+			}
+			else if (count_down)
+			{
+				for (; count_down; --count_down)
+				{
+					emplace_back(_val);
+				}
+			}
+		}
+		template<typename Itr, typename = std::enable_if_t<std::_Is_iterator_v<Itr>>>
+		void assign(Itr _begin, Itr _end)
+		{
+			//if the iterator is at least a forward iterator
+			if (std::is_convertible_v<std::_Iter_cat_t<Itr>, std::forward_iterator_tag>)
+			{
+				auto _diff = std::distance(_begin, _end);
+#ifdef _DEBUG
+				_STL_ASSERT(_diff >= 0, "vector iterator range transposed");
+#endif // _DEBUG
+				assign_counted_range(_begin, static_cast<size_t>(_diff));
+			}
+			else
+			{
+				assign_uncounted_range(_begin, _end);
 			}
 		}
 
@@ -393,7 +565,7 @@ namespace NAME_GENERAL_NAMESPACE
 				return iterator(_where.ptr, container);
 			}
 		}
-		iterator insert(const_iterator _where, size_t _cnt, const DataType& _val)
+		iterator insert(const_iterator _where, const size_t _cnt, const DataType& _val)
 		{
 #ifdef _DEBUG
 			_STL_ASSERT(container == _where.source, "vector iterators incompatible");
@@ -479,7 +651,11 @@ namespace NAME_GENERAL_NAMESPACE
 			//if the iterator is at least a forward iterator
 			if (std::is_convertible_v<std::_Iter_cat_t<Itr>, std::forward_iterator_tag>)
 			{
-				int insert_len = std::distance(_end, _begin);
+				auto _diff = std::distance(_begin, _end);
+#ifdef _DEBUG
+				_STL_ASSERT(_diff >= 0, "vector iterator range transposed");
+#endif // _DEBUG
+				size_t insert_len = static_cast<size_t>(_diff);
 				if (insert_len > container->n_capacity - (container->p_end - container->p_begin))
 				{
 					size_t new_capacity = container->n_capacity;
@@ -615,6 +791,14 @@ namespace NAME_GENERAL_NAMESPACE
 			_STL_ASSERT(index < size(), "vector subscript out of range");
 #endif // _DEBUG
 			return *(container->p_begin + index);
+		}
+		DataType& at(size_t index)
+		{
+			return operator[](index);
+		}
+		const DataType& at(size_t index)const
+		{
+			return operator[](index);
 		}
 		DataType& front()
 		{
