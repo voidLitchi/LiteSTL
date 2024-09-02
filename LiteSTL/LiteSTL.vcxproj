@@ -127,7 +127,9 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="copy_detector.h" />
     <ClInclude Include="general_define.h" />
+    <ClInclude Include="list.h" />
     <ClInclude Include="vector.h" />
   </ItemGroup>
   <ItemGroup>
